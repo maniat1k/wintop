@@ -6,6 +6,7 @@ WinTop es un monitor de procesos para Windows escrito en PowerShell, inspirado e
 
 - Barras por nucleo de CPU cuando Windows permite consultar los contadores del sistema.
 - Barra de memoria fisica usada.
+- Estado de la conexion activa (Wi-Fi o Ethernet) y trafico de descarga/subida en tiempo real.
 - Conteo de tareas, hilos activos y uptime.
 - Tabla de procesos con PID, usuario, prioridad, hilos, memoria virtual, memoria residente, CPU, memoria y comando.
 - CPU calculada por delta entre muestras, no por CPU acumulada desde el inicio del proceso.

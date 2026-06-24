@@ -103,14 +103,15 @@ if %ERRORLEVEL% EQU 0 (
 Install-WinTopCommand
 
 $script:state = @{
-    SortBy       = $SortBy
-    Filter       = ''
-    Previous     = @{}
-    PreviousTime = Get-Date
-    Message      = 'q quit | h help | c/m/p/n sort | f filter | k kill | +/- rows'
-    ProcessLimit = [Math]::Max(5, $ProcessLimit)
-    OwnerLookup  = $true
-    OwnerCache    = @{}
+    SortBy         = $SortBy
+    Filter         = ''
+    Previous       = @{}
+    PreviousTime   = Get-Date
+    Message        = 'q quit | h help | c/m/p/n sort | f filter | k kill | +/- rows'
+    ProcessLimit   = [Math]::Max(5, $ProcessLimit)
+    OwnerLookup    = $true
+    OwnerCache     = @{}
+    NetworkPrevious = $null
 }
 
 function Get-Bar {
@@ -169,6 +170,19 @@ function Format-Size {
         return ('{0:N0}K' -f ($Bytes / 1KB))
     }
     return ('{0:N0}B' -f $Bytes)
+}
+
+function Format-NetworkRate {
+    param(
+        [double]$BytesPerSecond,
+        [bool]$HasSample
+    )
+
+    if (-not $HasSample) {
+        return '--'
+    }
+
+    return ('{0}/s' -f (Format-Size ([Math]::Max(0, $BytesPerSecond))))
 }
 
 function Set-CursorVisibility {
@@ -246,6 +260,89 @@ function Get-OwnerName {
 
     $script:state.OwnerCache[$Process.Id] = '?'
     return '?'
+}
+
+function Get-NetworkSnapshot {
+    param([object]$Previous)
+
+    $now = Get-Date
+    $candidates = @()
+
+    try {
+        $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+        foreach ($networkInterface in $interfaces) {
+            if ($networkInterface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) {
+                continue
+            }
+
+            $interfaceType = $networkInterface.NetworkInterfaceType.ToString()
+            if ($interfaceType -notin @('Ethernet', 'Ethernet3Megabit', 'FastEthernetT', 'FastEthernetFx', 'GigabitEthernet', 'Wireless80211')) {
+                continue
+            }
+
+            try {
+                $gateways = @($networkInterface.GetIPProperties().GatewayAddresses | Where-Object {
+                    $address = $_.Address.ToString()
+                    -not [string]::IsNullOrWhiteSpace($address) -and $address -notin @('0.0.0.0', '::')
+                })
+                if ($gateways.Count -eq 0) {
+                    continue
+                }
+
+                $statistics = $networkInterface.GetIPv4Statistics()
+                $candidates += [PSCustomObject]@{
+                    Id       = $networkInterface.Id
+                    Name     = $networkInterface.Name
+                    Type     = if ($interfaceType -eq 'Wireless80211') { 'Wi-Fi' } else { 'Ethernet' }
+                    Speed    = [double]$networkInterface.Speed
+                    Received = [double]$statistics.BytesReceived
+                    Sent     = [double]$statistics.BytesSent
+                }
+            } catch {
+            }
+        }
+    } catch {
+    }
+
+    $active = $candidates | Sort-Object Speed -Descending | Select-Object -First 1
+    if ($null -eq $active) {
+        return [PSCustomObject]@{
+            Connected  = $false
+            Type       = ''
+            Name       = ''
+            Download   = 0
+            Upload     = 0
+            HasSample  = $true
+            Previous   = $null
+        }
+    }
+
+    $download = 0
+    $upload = 0
+    $hasSample = $false
+    if ($null -ne $Previous -and $Previous.Id -eq $active.Id) {
+        $elapsed = ($now - $Previous.Time).TotalSeconds
+        if ($elapsed -gt 0 -and $active.Received -ge $Previous.Received -and $active.Sent -ge $Previous.Sent) {
+            $download = ($active.Received - $Previous.Received) / $elapsed
+            $upload = ($active.Sent - $Previous.Sent) / $elapsed
+            $hasSample = $true
+        }
+    }
+
+    [PSCustomObject]@{
+        Connected = $true
+        Type      = $active.Type
+        Name      = $active.Name
+        Download  = $download
+        Upload    = $upload
+        HasSample = $hasSample
+        Previous  = [PSCustomObject]@{
+            Id       = $active.Id
+            Received = $active.Received
+            Sent     = $active.Sent
+            Time     = $now
+        }
+    }
 }
 
 function Get-SystemSnapshot {
@@ -378,7 +475,8 @@ function Select-VisibleProcesses {
 function Draw-Header {
     param(
         [object]$System,
-        [object]$ProcessSnapshot
+        [object]$ProcessSnapshot,
+        [object]$Network
     )
 
     $width = Get-ConsoleWidth
@@ -417,6 +515,21 @@ function Draw-Header {
         @{ Text = ('] {0}/{1} {2,5:N1}%' -f (Format-Size $System.UsedMemory), (Format-Size $System.TotalMemory), $System.MemoryPercent); Color = [ConsoleColor]::Gray }
     )
 
+    if ($Network.Connected) {
+        Write-ColorParts @(
+            @{ Text = 'Net  '; Color = [ConsoleColor]::Gray },
+            @{ Text = $Network.Type; Color = [ConsoleColor]::Cyan },
+            @{ Text = ' | Connected'; Color = [ConsoleColor]::Green },
+            @{ Text = (' | Down {0} | Up {1}' -f (Format-NetworkRate $Network.Download $Network.HasSample), (Format-NetworkRate $Network.Upload $Network.HasSample)); Color = [ConsoleColor]::Gray }
+        )
+    } else {
+        Write-ColorParts @(
+            @{ Text = 'Net  '; Color = [ConsoleColor]::Gray },
+            @{ Text = 'Disconnected'; Color = [ConsoleColor]::Red },
+            @{ Text = ' | Down 0B/s | Up 0B/s'; Color = [ConsoleColor]::Gray }
+        )
+    }
+
     Write-Host ('Tasks: {0}, {1} thr; {2} active | Uptime: {3:0}d {4:00}:{5:00}:{6:00}' -f $ProcessSnapshot.TotalTasks, $ProcessSnapshot.Threads, $ProcessSnapshot.Running, $System.Uptime.Days, $System.Uptime.Hours, $System.Uptime.Minutes, $System.Uptime.Seconds) -ForegroundColor Cyan
     Write-Host $script:state.Message -ForegroundColor DarkGray
     Write-Host ''
@@ -426,7 +539,7 @@ function Draw-Processes {
     param([object[]]$Rows)
 
     $height = Get-ConsoleHeight
-    $maxRows = [Math]::Min($script:state.ProcessLimit, $height - 9)
+    $maxRows = [Math]::Max(0, [Math]::Min($script:state.ProcessLimit, $height - 10))
     $nameWidth = [Math]::Max(18, (Get-ConsoleWidth) - 73)
 
     Write-Host ("{0,6} {1,-12} {2,3} {3,4} {4,8} {5,8} {6,6} {7,6} {8}" -f 'PID', 'USER', 'PRI', 'THR', 'VIRT', 'RES', 'CPU%', 'MEM%', 'COMMAND') -ForegroundColor Black -BackgroundColor Green
@@ -501,6 +614,8 @@ function Show-Top {
         $warmProcesses = Get-ProcessSnapshot $script:state.Previous $script:state.PreviousTime $warmSystem.ProcessorCount
         $script:state.Previous = $warmProcesses.Previous
         $script:state.PreviousTime = $warmProcesses.PreviousTime
+        $warmNetwork = Get-NetworkSnapshot $script:state.NetworkPrevious
+        $script:state.NetworkPrevious = $warmNetwork.Previous
         Start-Sleep -Milliseconds ([Math]::Max(200, [Math]::Min(1000, [int]($RefreshRate * 1000))))
 
         while ($true) {
@@ -508,10 +623,12 @@ function Show-Top {
             $processSnapshot = Get-ProcessSnapshot $script:state.Previous $script:state.PreviousTime $system.ProcessorCount
             $script:state.Previous = $processSnapshot.Previous
             $script:state.PreviousTime = $processSnapshot.PreviousTime
+            $network = Get-NetworkSnapshot $script:state.NetworkPrevious
+            $script:state.NetworkPrevious = $network.Previous
             $visibleProcesses = Select-VisibleProcesses $processSnapshot.Rows
 
             Clear-Screen
-            Draw-Header $system $processSnapshot
+            Draw-Header $system $processSnapshot $network
             Draw-Processes $visibleProcesses
 
             if ($Once) {
