@@ -65,3 +65,27 @@ Parametros:
 - PowerShell 5.1 o PowerShell 7+.
 
 Algunos datos, como usuario del proceso o barras por nucleo, dependen de permisos y contadores del sistema. Si Windows los bloquea, WinTop sigue funcionando con la informacion disponible.
+
+## Deuda técnica y plan de estabilización
+
+WinTop entra en una etapa de estabilización. Los puntos siguientes son **trabajos pendientes**, no defectos confirmados ni funcionalidades ya implementadas. Antes de publicar una versión estable, se verificará su comportamiento real en Windows 11 y, cuando sea posible, en PowerShell 5.1 y 7+.
+
+| Prioridad | Área | Tarea y criterio de cierre |
+| --- | --- | --- |
+| Alta | Instalación | Separar la instalación de la ejecución normal. Iniciar `top.ps1` no debería copiar archivos ni modificar el `PATH` sin una acción explícita. Documentar instalación, actualización y desinstalación. |
+| Alta | Lanzador y seguridad | Revisar `top.cmd` y el uso de `-ExecutionPolicy Bypass`; evitar excepciones innecesarias a la política de ejecución y verificar compatibilidad con Windows PowerShell 5.1 y PowerShell 7+. |
+| Alta | Pruebas | Agregar verificaciones reproducibles para `-Once`, parámetros y salida no interactiva. Probar manualmente navegación, ordenamiento, filtros y cierre de procesos. |
+| Media | Rendimiento | Medir el costo de consultas CIM por proceso; optimizar o incorporar caché si se confirma un problema. Manejar errores puntuales sin desactivar todas las consultas de usuario. |
+| Media | Red | Revisar la elección del adaptador activo: la interfaz de mayor velocidad no necesariamente transporta el tráfico principal. Probar Wi-Fi, Ethernet, VPN y múltiples adaptadores. |
+| Media | Robustez | Comprobar degradación ante permisos limitados, contadores CPU o CIM no disponibles y terminales pequeñas; evitar interrupciones y mensajes confusos. |
+| Baja | Publicación | Incorporar una licencia explícita, actualizar las limitaciones conocidas y crear una primera release etiquetada únicamente tras validar los puntos críticos. |
+
+### Plan de trabajo
+
+1. **03/11/2026 — Baseline:** ejecutar y documentar pruebas en Windows 11.
+2. **05/11/2026 — Instalación y lanzador:** desacoplar la instalación y revisar la política de ejecución.
+3. **10/11/2026 — Pruebas y errores:** agregar regresiones y validar casos de degradación.
+4. **12/11/2026 — Rendimiento y red:** medir CIM y revisar selección de interfaz.
+5. **17/11/2026 — Cierre técnico:** licencia, documentación, validación final y evaluación de release.
+
+Las fechas son bloques de trabajo previstos, no compromisos de entrega. El alcance excluye una reescritura y nuevas funcionalidades mayores. Después de la estabilización, el proyecto quedará en mantenimiento correctivo.
